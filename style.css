@@ -1,0 +1,20 @@
+#info {
+	padding:5px;
+}
+body { 
+	margin: 0;
+	 background-color: #f0f0f0; /* Light grey background for visibility */ 
+}
+canvas { 
+	display: block;
+}
+#info {
+    position: absolute;
+    top: 25px;
+    left: 10px;
+    color: white;
+    font-family: Arial, sans-serif;
+    font-size: 14px;
+    background-color: rgba(0,0,0,0.5);
+    padding: 10px;
+}

@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Three.js GLB/glTF Loader with Controls, Autorotate, and Screen Recording</title>
+    <style>
+        body { 
+            margin: 0; 
+            background-color: #f0f0f0;
+            font-family: Arial, sans-serif;
+        }
+        canvas { 
+            display: block; 
+        }
+        #info {
+            position: absolute;
+            top: 30px;
+            left: 10px;
+            color: black;
+            font-size: 14px;
+            background-color: rgba(255,255,255,0.7);
+            padding: 10px;
+        }
+        #controls {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+        }
+        button, input {
+            padding: 10px;
+            font-size: 16px;
+            margin-left: 10px;
+        }
+        input[type="number"] {
+            width: 60px;
+        }
+        label {
+            font-size: 14px;
+            color: white;
+            background-color: rgba(0,0,0,0.5);
+            padding: 5px;
+            border-radius: 3px;
+        }
+    </style>
+</head>
+<body>
+    <input type="file" id="fileInput" accept=".glb,.gltf">
+    <div id="canvas-container"></div>
+    <div id="info">
+        Mouse: Left click + drag to rotate, Right click + drag to pan, Scroll to zoom<br>
+        Keyboard: W/S - Move forward/backward, A/D - Move left/right, Q/E - Move up/down
+    </div>
+    <div id="controls">
+        <button id="autorotateBtn">Start Autorotate</button>
+        <label for="speedInput">Rotations per second:</label>
+        <input type="number" id="speedInput" min="0.01" max="2" step="0.01" value="0.08" title="360° rotations per second">
+        <button id="recordBtn">Start Recording</button>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/RGBELoader.js"></script>
+    <script>
+        let scene, camera, renderer, model, controls;
+        const keyState = {};
+        let isAutorotating = false;
+        let autorotateSpeed = Math.PI / 2.5; // Initial speed: 0.2 rotations per second
+        let mediaRecorder;
+        let recordedChunks = [];
+        let isRecording = false;
+
+        function init() {
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            
+            renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setClearColor(0x000000, 0);
+            renderer.toneMapping = THREE.ACESFilmicToneMapping;
+            renderer.toneMappingExposure = 1;
+            renderer.outputEncoding = THREE.sRGBEncoding;
+            document.getElementById('canvas-container').appendChild(renderer.domElement);
+
+            setupLighting();
+
+            camera.position.z = 5;
+
+            controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.05;
+
+            window.addEventListener('keydown', onKeyDown);
+            window.addEventListener('keyup', onKeyUp);
+            window.addEventListener('resize', onWindowResize);
+
+            setupAutorotateButton();
+            setupSpeedInput();
+            setupRecordButton();
+
+            animate();
+        }
+
+        function setupLighting() {
+            // Environment map
+            new THREE.RGBELoader()
+             //stuck here getting setPath reference//
+                .setPath('file:///Users/bryancooper/Desktop/Three%20JS%20Page%20Experiment/textures/')
+                .load('citrus_orchard_road_1k.hdr', function(texture) {
+                    texture.mapping = THREE.EquirectangularReflectionMapping;
+                    scene.environment = texture;
+                    scene.background = texture;
+
+                });
+
+            // Key light
+            const keyLight = new THREE.DirectionalLight(0xffffff, 5);
+            keyLight.position.set(5, 5, 5);
+            scene.add(keyLight);
+
+            // Fill light
+            const fillLight = new THREE.DirectionalLight(0xffffff, 2);
+            fillLight.position.set(-5, 5, 5);
+            scene.add(fillLight);
+
+            // Back light
+            const backLight = new THREE.DirectionalLight(0xffffff, 3);
+            backLight.position.set(0, 5, -5);
+            scene.add(backLight);
+        }
+        function setupAutorotateButton() {
+            const btn = document.getElementById('autorotateBtn');
+            btn.addEventListener('click', toggleAutorotate);
+        }
+
+        function toggleAutorotate() {
+            isAutorotating = !isAutorotating;
+            const btn = document.getElementById('autorotateBtn');
+            btn.textContent = isAutorotating ? 'Stop Autorotate' : 'Start Autorotate';
+            controls.autoRotate = isAutorotating;
+            updateAutorotateSpeed();
+        }
+
+        function setupSpeedInput() {
+            const input = document.getElementById('speedInput');
+            input.addEventListener('change', updateAutorotateSpeed);
+        }
+
+        function updateAutorotateSpeed() {
+            const rotationsPerSecond = parseFloat(document.getElementById('speedInput').value);
+            autorotateSpeed = rotationsPerSecond * 2 * Math.PI; // Convert to radians per second
+            controls.autoRotateSpeed = rotationsPerSecond * 360; // Convert to degrees per second for OrbitControls
+        }
+
+        function setupRecordButton() {
+            const btn = document.getElementById('recordBtn');
+            btn.addEventListener('click', toggleRecording);
+        }
+
+        function toggleRecording() {
+            if (!isRecording) {
+                startRecording();
+            } else {
+                stopRecording();
+            }
+            isRecording = !isRecording;
+            updateRecordButtonText();
+        }
+
+        function updateRecordButtonText() {
+            const btn = document.getElementById('recordBtn');
+            btn.textContent = isRecording ? 'Stop Recording' : 'Start Recording';
+        }
+
+        function startRecording() {
+            recordedChunks = [];
+            const stream = renderer.domElement.captureStream(60); // 60 FPS
+            mediaRecorder = new MediaRecorder(stream, { mimeType: 'video/webm' });
+            mediaRecorder.ondataavailable = handleDataAvailable;
+            mediaRecorder.start();
+        }
+
+        function stopRecording() {
+            mediaRecorder.stop();
+        }
+
+        function handleDataAvailable(event) {
+            if (event.data.size > 0) {
+                recordedChunks.push(event.data);
+                downloadRecording();
+            }
+        }
+
+        function downloadRecording() {
+            const blob = new Blob(recordedChunks, { type: 'video/webm' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            document.body.appendChild(a);
+            a.style = 'display: none';
+            a.href = url;
+            a.download = 'canvas-recording.webm';
+            a.click();
+            window.URL.revokeObjectURL(url);
+        }
+
+        function onKeyDown(event) {
+            keyState[event.code] = true;
+        }
+
+        function onKeyUp(event) {
+            keyState[event.code] = false;
+        }
+
+        function handleKeyboardInput() {
+            const moveSpeed = 0.1;
+            if (keyState['KeyW']) camera.translateZ(-moveSpeed);
+            if (keyState['KeyS']) camera.translateZ(moveSpeed);
+            if (keyState['KeyA']) camera.translateX(-moveSpeed);
+            if (keyState['KeyD']) camera.translateX(moveSpeed);
+            if (keyState['KeyQ']) camera.translateY(moveSpeed);
+            if (keyState['KeyE']) camera.translateY(-moveSpeed);
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            handleKeyboardInput();
+            controls.update();
+            renderer.render(scene, camera);
+        }
+
+        function loadModel(file) {
+            const loader = new THREE.GLTFLoader();
+            const reader = new FileReader();
+
+            reader.onload = function(e) {
+                loader.parse(e.target.result, '', function(gltf) {
+                    if (model) {
+                        scene.remove(model);
+                    }
+                    model = gltf.scene;
+                    scene.add(model);
+
+                    const box = new THREE.Box3().setFromObject(model);
+                    const center = box.getCenter(new THREE.Vector3());
+                    const size = box.getSize(new THREE.Vector3());
+                    const maxDim = Math.max(size.x, size.y, size.z);
+                    const scale = 2 / maxDim;
+                    model.scale.setScalar(scale);
+                    model.position.sub(center.multiplyScalar(scale));
+
+                    // Enable shadows for the model
+                    model.traverse((node) => {
+                        if (node.isMesh) {
+                            node.castShadow = true;
+                            node.receiveShadow = true;
+                        }
+                    });
+
+                    camera.position.set(0, 0, 5);
+                    controls.target.set(0, 0, 0);
+                    controls.update();
+                }, undefined, function(error) {
+                    console.error(error);
+                });
+            };
+
+            reader.readAsArrayBuffer(file);
+        }
+
+        init();
+
+        document.getElementById('fileInput').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (file) {
+                loadModel(file);
+            }
+        });
+    </script>
+</body>
+</html>
